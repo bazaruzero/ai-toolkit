@@ -122,6 +122,16 @@ class VersionTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             search_mod.expand_version_spec("15.14-16.4")
 
+    def test_expand_multi_branch_list(self):
+        self.assertEqual(
+            search_mod.expand_version_spec("15.14-15.15,16.0-16.1"),
+            [(15, 14), (15, 15), (16, 0), (16, 1)],
+        )
+        self.assertEqual(
+            search_mod.expand_version_spec("16.4,17.0"),
+            [(16, 4), (17, 0)],
+        )
+
     def test_expand_list_and_single(self):
         self.assertEqual(
             search_mod.expand_version_spec("16.1,16.3"), [(16, 1), (16, 3)]
@@ -242,6 +252,66 @@ class SearchTests(unittest.TestCase):
                  "--versions", "16.9"]
             )
             self.assertEqual(code, 2)
+
+    def test_include_empty_rows_for_versions_without_matches(self):
+        # 16.4 has a match (heap_force_freeze), 17.0 does not; every
+        # version in the spec still appears, newest first
+        results = search_mod.collect_results(
+            self.cache, "16.4,17.0", ["heap_force_freeze"], include_empty=True
+        )
+        releases = [result["release"] for result in results]
+        self.assertEqual(releases, ["17.0", "16.4"])
+        self.assertEqual(results[0]["entry"], "")
+        self.assertTrue(results[1]["entry"])
+
+    def test_include_empty_rows_for_versions_missing_from_cache(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            Path(tmp, "release-16.4.html").write_text(
+                MINOR_PAGE, encoding="utf-8"
+            )
+            cache = Path(tmp)
+            results = search_mod.collect_results(
+                cache, "16.4,16.9", ["freeze"], include_empty=True
+            )
+            releases = [result["release"] for result in results]
+            self.assertEqual(releases, ["16.9", "16.4"])
+            self.assertTrue(results[0]["missing_from_cache"])
+            self.assertFalse("missing_from_cache" in results[1])
+
+    def test_include_empty_renders_placeholder_rows(self):
+        output = search_mod.render_table(
+            search_mod.collect_results(
+                self.cache, "16.4,17.0", ["heap_force_freeze"],
+                include_empty=True
+            ),
+            include_empty=True,
+        )
+        self.assertIn("| 17.0 | _no matching entries_ |  |", output)
+        self.assertIn("heap_force_freeze", output)
+
+    def test_include_empty_requires_version_scope(self):
+        code = search_mod.main(
+            ["--cache-dir", str(self.cache), "--query", "vacuum",
+             "--include-empty"]
+        )
+        self.assertEqual(code, 2)
+
+    def test_since_expands_against_cache(self):
+        with contextlib.redirect_stdout(io.StringIO()) as captured:
+            code = search_mod.main(
+                ["--cache-dir", str(self.cache), "--query", "heap_force_freeze",
+                 "--since", "16.4", "--include-empty"]
+            )
+        self.assertEqual(code, 0)
+        output = captured.getvalue()
+        self.assertIn("| 17.0 | _no matching entries_ |  |", output)
+        self.assertIn("heap_force_freeze", output)
+        # --since and --versions are mutually exclusive
+        code = search_mod.main(
+            ["--cache-dir", str(self.cache), "--query", "vacuum",
+             "--since", "16.4", "--versions", "17.0"]
+        )
+        self.assertEqual(code, 2)
 
 
 class CLITests(unittest.TestCase):

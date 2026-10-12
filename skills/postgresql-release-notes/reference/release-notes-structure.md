@@ -73,3 +73,17 @@ the `§` anchor), or to the release page URL when no commit link exists.
   within a 200-character window.
 - A match in any paragraph of an entry (summary or description) selects the
   whole entry.
+
+## Version selection
+
+- `--versions` accepts single versions, intra-major ranges (`16.1-16.4`),
+  lists, and comma-joined multi-branch spans (`15.14-15.19,16.0-16.15`).
+  A single range must stay within one major branch; join ranges with commas
+  to cover several branches.
+- `--since X.Y` (fetch and search scripts) selects every release at or
+  above X.Y across all major branches. The fetch script expands it from the
+  live index page; the search script expands it from the cached versions.
+- With `--include-empty`, the search emits one placeholder row per selected
+  version that has no matches (`no matching entries`), and one per selected
+  version absent from the cache (`not in cache (fetch it first)`), so the
+  output covers every version in the requested range.

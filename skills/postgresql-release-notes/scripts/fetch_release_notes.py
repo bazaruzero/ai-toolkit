@@ -6,7 +6,8 @@ Only the Python standard library is used.
 Usage:
   python3 fetch_release_notes.py list
   python3 fetch_release_notes.py fetch --major 17 [--min-release 17.2] [--cache-dir .cache]
-  python3 fetch_release_notes.py fetch --versions "16.1-16.4" | "16.4" | "16.1,16.3"
+  python3 fetch_release_notes.py fetch --versions "16.1-16.4" | "16.4" | "16.1,16.3" | "15.14-15.19,16.0-16.15"
+  python3 fetch_release_notes.py fetch --since 15.14 [--cache-dir .cache]
 """
 
 import argparse
@@ -46,20 +47,33 @@ def format_version(version):
     return f"{major}.{minor}"
 
 
-def expand_version_spec(spec):
-    """Turn '17.0-17.3', '16.1,16.4' or '17.2' into a sorted list of versions."""
-    range_match = re.match(r"^(\d+(?:\.\d+)?)\s*-\s*(\d+(?:\.\d+)?)$", spec.strip())
+def expand_range_part(part):
+    """Expand a single range or version like '17.0-17.3' or '17.2'."""
+    range_match = re.match(r"^(\d+(?:\.\d+)?)\s*-\s*(\d+(?:\.\d+)?)$", part.strip())
     if range_match:
         low = parse_version(range_match.group(1))
         high = parse_version(range_match.group(2))
         if low > high:
-            raise ValueError(f"descending version range: {spec!r}")
+            raise ValueError(f"descending version range: {part!r}")
         if low[0] != high[0]:
             raise ValueError(
-                f"version range must stay within one major branch: {spec!r}"
+                f"version range must stay within one major branch: {part!r}"
             )
         return [(low[0], minor) for minor in range(low[1], high[1] + 1)]
-    versions = [parse_version(part) for part in spec.split(",") if part.strip()]
+    return [parse_version(part)]
+
+
+def expand_version_spec(spec):
+    """Expand '15.14-15.19,16.0-16.4', '16.1,16.4' or '17.2' into versions.
+
+    Comma-separated parts may each be a single version or an intra-major
+    range, so a multi-branch span like '15.14-15.19,16.0-16.15' works.
+    """
+    versions = []
+    for part in spec.split(","):
+        part = part.strip()
+        if part:
+            versions.extend(expand_range_part(part))
     if not versions:
         raise ValueError(f"empty version spec: {spec!r}")
     return sorted(set(versions))
@@ -114,11 +128,17 @@ def build_parser():
     target = fetch_parser.add_mutually_exclusive_group(required=True)
     target.add_argument(
         "--versions",
-        help="version range, list, or single version: '17.0-17.3', '16.1,16.4', '16.4'",
+        help="version range, list, or single version: '17.0-17.3', '16.1,16.4', "
+        "'16.4', or comma-joined multi-branch span like '15.14-15.19,16.0-16.15'",
     )
     target.add_argument(
         "--major", type=int,
         help="fetch all listed minor releases of one major branch (e.g. 17)",
+    )
+    target.add_argument(
+        "--since",
+        help="fetch every published release at or above this version "
+        "(e.g. 15.14), across all major branches",
     )
     fetch_parser.add_argument(
         "--min-release", default=None,
@@ -161,6 +181,15 @@ def run_fetch(args):
         ]
         if not versions:
             print(f"no releases found for branch {args.major}", file=sys.stderr)
+            return 1
+    elif args.since:
+        since = parse_version(args.since)
+        versions = [
+            version for version in extract_releases_from_index(http_get(INDEX_URL))
+            if version >= since
+        ]
+        if not versions:
+            print(f"no releases found at or above {args.since}", file=sys.stderr)
             return 1
     else:
         try:
